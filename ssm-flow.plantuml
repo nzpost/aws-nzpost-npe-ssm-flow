@@ -1,0 +1,69 @@
+@startuml
+participant Client
+participant STS
+participant EC2
+participant RDS
+Client -> Client: export\nenvironment variables
+rnote over Client
+  ENV AWS_ACCESS_KEY_ID
+  ENV AWS_SECRET_ACCESS_KEY
+endrnote
+box "AWS CLI Client" #LightYellow
+  participant Client
+end box
+box "AWS" #LightYellow
+  participant STS
+  participant EC2
+  participant RDS
+end box
+||50||
+
+== Phase 1: Acquire Session Manager Credentials ==
+Client -> STS: ""**aws sts assume-role**""
+STS --> Client: {\n  "Credentials": {\n    "AccessKeyId",\n    "SecretAccessKey",\n    "SessionToken"\n  }\n}
+||50||
+
+== Phase 2: Start Session with Assumed Role ==
+Client -> Client: export\nenvironment variables
+rnote over Client
+  ENV AWS_ACCESS_KEY_ID
+  ENV AWS_SECRET_ACCESS_KEY
+  ENV AWS_SESSION_TOKEN
+endrnote
+Client -> EC2: ""**aws ssm start-session**""\n--document-name AWS-StartPortForwardingSession\n--parameters\n'{"portNumber":["5555"],\n"localPortNumber":["5432"]}'
+EC2 --> Client: Session started
+hnote over Client, EC2
+  Traffic destined to localhost:5432
+  forwards to ec2:5555
+endhnote
+||50||
+
+== Phase 3: Setup tunnel to RDS ==
+Client -> EC2: **""socat""** TCP4-LISTEN:5555,\nfork TCP4:uat-mule.cifqx5xdlbgh.ap-southeast-2.rds.amazonaws.com:5432
+hnote over EC2, RDS
+  Traffic destined to ec2:5555
+  forwards to rds:5432
+endhnote
+EC2 --> Client: socat started
+||50||
+
+== Phase 4: Create connection to RDS ==
+Client -> Client: Connect to\nlocalhost:5432
+Client -> EC2: Traffic forwards to ec2:5555
+EC2 -> RDS: Traffic forwards to rds:5432
+RDS --> EC2: Response
+EC2 --> Client: Response
+||50||
+
+== Phase 5: Teardown ==
+Client -> EC2: Stop socat
+hnote over EC2, RDS
+  Connection terminated
+endhnote
+EC2 --> Client: socat stopped
+Client -> EC2: ""**aws ssm terminate-session**""
+hnote over Client, EC2
+  Connection terminated
+endhnote
+EC2 --> Client: Session terminated
+@enduml
